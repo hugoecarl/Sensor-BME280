@@ -72,6 +72,11 @@
 #define EBUT2_PIO_ID 10
 #define EBUT2_PIO_IDX 19
 #define EBUT2_PIO_IDX_MASK (1u << EBUT2_PIO_IDX)
+//butao 3 oled
+#define EBUT3_PIO PIOC //sei la EXT 3 PC31
+#define EBUT3_PIO_ID 12 // piod ID
+#define EBUT3_PIO_IDX 31
+#define EBUT3_PIO_IDX_MASK (1u << EBUT3_PIO_IDX)
 
 #define TWIHS_MCU6050_ID    ID_TWIHS0
 #define TWIHS_MCU6050       TWIHS0
@@ -91,6 +96,7 @@ volatile uint8_t  accXLow,  accYLow,  accZLow;
 uint32_t hour, minuto,seg;
 uint temp, pres, umid;
 int opc = 1;
+int delay = 1000/portTICK_PERIOD_MS;
 
 
 
@@ -141,8 +147,13 @@ static void but1_oled_callback(void){
 	opc++;
 }
 static void but2_oled_callback(void){
-	opc++;
+	if (delay > 100)
+	delay -= 100;
 }
+static void but3_oled_callback(void){
+	delay += 100;
+}
+
 
 /************************************************************************/
 /* RTOS application funcs                                               */
@@ -228,10 +239,12 @@ void BUT_init(void){
 		// configura botoes do oled
 		pmc_enable_periph_clk(EBUT1_PIO_ID);
 		pmc_enable_periph_clk(EBUT2_PIO_ID);
+		pmc_enable_periph_clk(EBUT3_PIO_ID);
 		
 		// configura botoes do oled como input;
 		pio_configure(EBUT1_PIO, PIO_INPUT, EBUT1_PIO_IDX_MASK, PIO_PULLUP | PIO_DEBOUNCE);
 		pio_configure(EBUT2_PIO, PIO_INPUT, EBUT2_PIO_IDX_MASK, PIO_PULLUP | PIO_DEBOUNCE);
+		pio_configure(EBUT3_PIO, PIO_INPUT, EBUT3_PIO_IDX_MASK, PIO_PULLUP | PIO_DEBOUNCE);
 		
 		// Configura interrup??o no pino referente ao botao e associa
 		// fun??o de callback caso uma interrup??o for gerada
@@ -248,9 +261,16 @@ void BUT_init(void){
 		PIO_IT_FALL_EDGE,
 		but2_oled_callback);
 		
+		pio_handler_set(EBUT3_PIO,
+		EBUT3_PIO_ID,
+		EBUT3_PIO_IDX_MASK,
+		PIO_IT_FALL_EDGE,
+		but3_oled_callback);
+		
 		// Ativa interrup??o
 		pio_enable_interrupt(EBUT1_PIO, EBUT1_PIO_IDX_MASK);
 		pio_enable_interrupt(EBUT2_PIO, EBUT2_PIO_IDX_MASK);
+		pio_enable_interrupt(EBUT3_PIO, EBUT3_PIO_IDX_MASK);
 
 		// Configura NVIC para receber interrupcoes do PIO do botao
 		// com prioridade 4 (quanto mais pr?ximo de 0 maior)
@@ -259,6 +279,8 @@ void BUT_init(void){
 		NVIC_SetPriority(EBUT1_PIO_ID, 4); // Prioridade 4
 		NVIC_EnableIRQ(EBUT2_PIO_ID);
 		NVIC_SetPriority(EBUT2_PIO_ID, 4); // Prioridade 4
+		NVIC_EnableIRQ(EBUT3_PIO_ID);
+		NVIC_SetPriority(EBUT3_PIO_ID, 4); // Prioridade 4
 };
 
 /**
@@ -434,14 +456,12 @@ void RTC_init(){
 
 void task_sensor(void){
   
- printf("oi\n");
- 
  while(1){
 	 if (bme280_i2c_read_temp(&temp, &pres, &umid))
 	 printf("erro readinG temperature \n");
 	 
 	 pin_toggle(LED_PIO, LED_PIN_MASK);
-	 vTaskDelay(1000/portTICK_PERIOD_MS);
+	 vTaskDelay(delay);
  }
 }
 
@@ -464,16 +484,28 @@ void task_usuario(void){
 		printf("Temperatura: %d \n", temp);
 		printf("Pressao: %d \n", pres);
 		printf("Umidade: %d \n\n", umid);
+		
+		//Dividindo por 1000 para caber na tela OLED
+		itoa(temp/1000, hnum1, 10);
+		itoa(umid/1000, hnum2, 10);
+		itoa(pres/1000, hnum3, 10);
+		gfx_mono_draw_string("       ",0,16, &sysfont);
+		gfx_mono_draw_string("         ",45,16, &sysfont);
+		gfx_mono_draw_string("T:",0,16, &sysfont);
+		gfx_mono_draw_string(hnum1,20,16, &sysfont);
+		gfx_mono_draw_string("U:",45,16, &sysfont);
+		gfx_mono_draw_string(hnum2,65,16, &sysfont);
+		gfx_mono_draw_string("P:",90,16, &sysfont);
+		gfx_mono_draw_string(hnum3,110,16, &sysfont);
 	} else {
-		//printf("RECORD MODE, Aperte  o botão 1 para sair.\n");
+		gfx_mono_draw_string("       ",0,16, &sysfont);
+		gfx_mono_draw_string("         ",45,16, &sysfont);
+		gfx_mono_draw_string("Record mode",0,16, &sysfont);
 		xSemaphoreGive(xSemaphore);
 	}
 	
-	
-		//itoa(hora, hnum, 10);
-		gfx_mono_draw_string("sdsd",0,16, &sysfont);
 		
-	vTaskDelay(1000/portTICK_PERIOD_MS);
+	vTaskDelay(delay);
 	
 	}
 }
@@ -481,6 +513,13 @@ void task_usuario(void){
 void task_sd(void){
 	
 		xSemaphore = xSemaphoreCreateBinary();	
+		
+		char hnum1[5];
+		char hnum2[5];
+		char hnum3[5];
+		char hnum4[5];
+		char hnum5[5];
+		char hnum6[5];
 		
 		char test_file_name[] = "0:sd_mmc_test.txt";
 		Ctrl_status status;
@@ -501,6 +540,14 @@ void task_sd(void){
 		if( xSemaphoreTake(xSemaphore, ( TickType_t ) 10) == pdTRUE){
 		printf("Please plug an SD, MMC or SDIO card in slot.\n\r");
 
+		itoa(temp, hnum1, 10);
+		itoa(umid, hnum2, 10);
+		itoa(pres, hnum3, 10);
+		itoa(hour, hnum4, 10);
+		itoa(minuto, hnum5, 10);
+		itoa(seg, hnum6, 10);	
+		
+		
 		/* Wait card present and ready */
 		do {
 			status = sd_mmc_test_unit_ready(0);
@@ -533,11 +580,22 @@ void task_sd(void){
 		printf("[OK]\r\n");
 
 		printf("Write to test file (f_puts)...\r\n");
-		if (0 == f_puts("Temper é -", &file_object)) {
+		if (0 == f_puts("Temperatura-", &file_object)) {
 			f_close(&file_object);
 			printf("[FAIL]\r\n");
 			goto main_end_of_test;
 		}
+		f_puts(hnum1, &file_object);
+		f_puts("  Pressão-", &file_object);
+		f_puts(hnum3, &file_object);
+		f_puts("  Umidade-", &file_object);
+		f_puts(hnum2, &file_object);
+		f_puts(" ", &file_object);
+		f_puts(hnum4, &file_object);
+		f_puts(":", &file_object);
+		f_puts(hnum5, &file_object);
+		f_puts(":", &file_object);
+		f_puts(hnum6, &file_object);
 		printf("[OK]\r\n");
 		f_close(&file_object);
 		printf("Test is successful.\n\r");
@@ -591,7 +649,7 @@ int main(void){
    
   printf("Chip encontrado, inicializando temperatura \n");
   bme280_i2c_config_temp();
-	printf("noooo\n");
+	
 	
 	/* Create task to make led blink */
 	xTaskCreate(task_sensor, "BLT", TASK_PROCESS_STACK_SIZE, NULL,	TASK_PROCESS_STACK_PRIORITY, NULL);
